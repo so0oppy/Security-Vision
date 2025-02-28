@@ -52,14 +52,10 @@ clothing_feature = None
 clothing_features = set() # 중복 저장 피하기 위함
 cnt = 0 # 같은 사람이 머뭇거린 횟수
 
-# # MediaPipe Pose 모델 로드
-# mp_pose = mp.solutions.pose  
-# pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)  
-
 # Optical Flow 설정
 prev_frame = None # 이전 프레임
 prev_gray = None # 이전 프레임의 흑백 이미지 저장 변수
-stagnant_threshold = 5.0  
+stagnant_threshold = 4 
 stagnant_frames = 0  
 
 # cap = cv2.VideoCapture(0) # 기본 카메라
@@ -79,12 +75,6 @@ out = cv2.VideoWriter("output.mp4", cv2.VideoWriter_fourcc(*"mp4v"), fps, (width
 frame_skip = 10  # 프레임을 특정 개수 건너뛰고 처리(처리 속도 향상)
 frame_count = 0  # 처리한 프레임의 카운터
 
-# # 트래커 딕셔너리 (객체별로 고유 트래커 할당)
-# trackers = cv2.legacy.MultiTracker_create()
-# tracking_objects = {}  # {obj_id: (tracker, bbox, last_seen)}
-# tracking_data = {}  # {person_id: [(x, y), time]}
-# obj_counter = 0  # 객체 ID 증가용 카운터
-
 def compute_iou(box1, box2):
     # IOU(Intersection Over Union) 계산 : 두 바운딩 박스의 겹치는 정도
     x1, y1, w1, h1 = box1
@@ -102,33 +92,6 @@ def compute_iou(box1, box2):
 
     return inter_area / union_area if union_area > 0 else 0
 
-# def create_tracker(frame, bbox):
-#     # 새로운 객체 트래커 생성
-#     tracker = cv2.TrackerCSRT_create()  # CSRT 트래커 사용 (정확도 높음)
-#     tracker.init(frame, bbox)
-#     return tracker
-
-# def detect_climbing(frame):
-#     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-#     results = pose.process(frame_rgb)
-
-#     if results.pose_landmarks:
-#         landmarks = results.pose_landmarks.landmark
-        
-#         left_ankle = landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value]
-#         right_ankle = landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value]
-#         left_hip = landmarks[mp_pose.PoseLandmark.LEFT_HIP.value]
-#         right_hip = landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value]
-
-#         avg_ankle_y = (left_ankle.y + right_ankle.y) / 2
-#         avg_hip_y = (left_hip.y + right_hip.y) / 2
-
-#         # 발이 허리보다 높으면 담 넘기 동작으로 판단
-#         if avg_ankle_y < avg_hip_y - 0.1:
-#             cv2.putText(frame, "CLIMBING DETECTED!!", (50, 100), cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255), 2)
-#             return True
-#     return False
-
 while cap.isOpened():
     start_time = time.time()
     ret, frame = cap.read()
@@ -140,7 +103,7 @@ while cap.isOpened():
     intrusion_detected = False # 감시 구역 내 진입 여부 초기화
 
     frame_count += 1
-
+    
     # 매 'frame_skip'번째 프레임만 처리
     if frame_count % frame_skip != 0:
         continue  # 건너뛰기
@@ -206,34 +169,11 @@ while cap.isOpened():
                 boxes.append(bbox)
                 confidences.append(float(confidence))
                 class_ids.append(class_id)
-
-                # # 새로운 객체인지 확인 (기존 트래커와 비교)
-                # new_object = True
-                # for obj_id, (tracker, last_bbox, last_seen) in tracking_objects.items():
-                #     (tx, ty, tw, th) = last_bbox
-                #     iou = compute_iou((x, y, w, h), (tx, ty, tw, th))  # IOU 계산
-                #     if iou > 0.5:  # IOU 50% 이상이면 같은 객체로 판단
-                #         new_object = False
-                #         tracking_objects[obj_id] = (tracker, bbox, time.time())  # 좌표 업데이트
-                #         break
-                    
-                # if new_object:
-                #     obj_counter += 1  # 새로운 ID 할당
-                #     tracker = create_tracker(frame, bbox)
-                #     tracking_objects[obj_counter] = (tracker, bbox, time.time())  # 트래킹 시작
     
     # Non-Maximum Suppression(비최대 억제) 적용 : 가장 신뢰도 높은 박스만 남기고 겹치는 박스 제거
     indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4) # 신뢰도 50%이상만, IOU(Interaction Over Union, 교차비율) 40%이상 -> 중복판단 
     # 더 엄격한 필터링 -> 신뢰도↑, IOU↓
     # 더 많은 객체 감지 -> 신뢰도↓, IOU↑
-
-    # # 트래커 업데이트 (프레임마다 실행)
-    # for obj_id, (tracker, bbox, last_seen) in list(tracking_objects.items()):
-    #     success, new_bbox = tracker.update(frame)  # 객체 위치 업데이트
-    #     if success:
-    #         tracking_objects[obj_id] = (tracker, new_bbox, time.time())  # 최신 좌표 저장
-    #     else:
-    #         del tracking_objects[obj_id]  # 추적 실패 시 제거
 
     if len(indexes) > 0:
         # 사람 감지 루프
@@ -277,47 +217,39 @@ while cap.isOpened():
                 image = frame[y:y+h, x:x+w]  # 사람의 bounding box에서 이미지 추출
                 clothing_feature = get_clothing_feature(image)
                 clothing_features.add(clothing_feature)
-                cv2.putText(frame, "Loitering Detected", (50, 50), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 255), 2)
+                cv2.putText(frame, "Loitering Detected", (50, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             prev_frame = frame # 현재 프레임 -> 다음 프레임 때의 이전 프레임으로 설정
 
             # 침입 감지 조건2: 사람이 구역 내에 들어가면 감지----------------------
-            if (x < monitor_x1 or x < monitor_x2) and (y+h) > monitor_y:
+            if x < monitor_x1 and (y+h) > monitor_y:
                 new_image = frame[y:y+h, x:x+w]  # 사람의 bounding box에서 이미지 추출
 
                 # 저장된 의상 특징 벡터 (이전에 추출한 벡터)
                 if clothing_features: # 비어있지 않다면
-                    for stored_clothing_feature in clothing_features:  # 이전에 저장된 벡터
-                        # 새로운 의상 특징 벡터와 비교
-                        new_clothing_feature = get_clothing_feature(new_image)  # 새로운 이미지에서 의상 특징 추출
-                        # 코사인 거리 계산
-                        stored = stored_clothing_feature.flatten() # 1D 변환
-                        new_clothing = new_clothing_feature.flatten() 
-                        distance = cosine(stored, new_clothing)
+                    new_clothing_feature = get_clothing_feature(new_image).flatten()  # 한 번만 추출
+                    min_distance = float('inf')  # 최소 거리 추적
 
-                        if distance < 0.5:  # 유사도가 일정 기준 이하일 경우, 같은 사람으로 판단
-                            # print("같은 사람입니다.")
-                            intrusion_detected = True # 침입으로 간주
-                            cv2.putText(frame, "Intrusion Detected", (50, 50), cv2.FONT_HERSHEY_PLAIN, 1, (255, 0, 0), 2)
-                        else:
-                            print("다른 사람입니다.")
-                
-                # current_time = time.time()
+                    stored_features = np.array([f.flatten() for f in clothing_features])  # 벡터 리스트 변환
+                    if stored_features.shape[0] > 0:  # 저장된 특징이 있을 때만 비교
+                        # 벡터 거리 계산 (numpy 연산)
+                        dot_products = np.dot(stored_features, new_clothing_feature)  # 내적
+                        norms = np.linalg.norm(stored_features, axis=1) * np.linalg.norm(new_clothing_feature)  # 정규화
+                        distances = 1 - (dot_products / norms)  # 코사인 거리
+                        min_distance = np.min(distances)  # 가장 가까운 거리 선택
 
-                # if obj_id in tracking_data:
-                #     elapsed_time = current_time - tracking_data[obj_id][1]
-                #     if elapsed_time > 3: # 3초 이상 머무르면 (머뭇거림 감지)
-                #         cv2.putText(frame, "Loitering Detected", (50, 50), cv2.FONT_HERSHEY_PLAIN, 1, (255, 0, 0), 2)
-                #         loitering_detected = True
-                # else:
-                #     tracking_data[obj_id] = [(x, y), current_time] # 위치 저장
-
-            # 침입 감지 조건3: MediaPipe Pose 기반 담 넘기 감지 --------------------------
-            # climbing_detected = detect_climbing(frame)
+                    # 유사도가 일정 기준 이하일 경우, 같은 사람으로 판단
+                    if min_distance < 0.5:
+                        print("서성이던 사람과 같은 사람입니다.")
+                        intrusion_detected = True  # 침입 감지
+                        cv2.putText(frame, "Intrusion Detected", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    else:
+                        print("다른 사람입니다.")
                 
             # --------------------------------------------------------------------------
             # 두 조건 모두 만족 시, 침입으로 간주하고 경고문구 & 경고음 발생
             if  intrusion_detected and stagnant_detected:
-                cv2.putText(frame, "!!WARNING!!", (250, 50), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 2)
+                cv2.putText(frame, "WARNING!", (250, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                cv2.putText(frame, "(Intrusion who was loitering)", (230, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
                 winsound.Beep(500, 1000)
 
     cv2.imshow("Person Detection", frame)
